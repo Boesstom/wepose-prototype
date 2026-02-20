@@ -31,6 +31,9 @@ import {
   Analytics01Icon,
   CommandIcon,
   Location01Icon,
+  Task01Icon,
+  PassportIcon,
+  Money03Icon,
 } from "@hugeicons/core-free-icons";
 
 const data = {
@@ -46,9 +49,19 @@ const data = {
       icon: <HugeiconsIcon icon={DashboardSquare01Icon} strokeWidth={2} />,
     },
     {
+      title: "Booking & Task",
+      url: "/dashboard/booking",
+      icon: <HugeiconsIcon icon={Task01Icon} strokeWidth={2} />,
+    },
+    {
       title: "Visa Management",
       url: "/dashboard/visa",
-      icon: <HugeiconsIcon icon={File01Icon} strokeWidth={2} />,
+      icon: <HugeiconsIcon icon={PassportIcon} strokeWidth={2} />,
+    },
+    {
+      title: "Pricing Manager",
+      url: "/dashboard/pricing",
+      icon: <HugeiconsIcon icon={Money03Icon} strokeWidth={2} />,
     },
     {
       title: "Document Library",
@@ -59,6 +72,11 @@ const data = {
       title: "Address Master",
       url: "/dashboard/addresses",
       icon: <HugeiconsIcon icon={Location01Icon} strokeWidth={2} />,
+    },
+    {
+      title: "Agents",
+      url: "/dashboard/agents",
+      icon: <HugeiconsIcon icon={UserGroupIcon} strokeWidth={2} />,
     },
   ],
   navClouds: [

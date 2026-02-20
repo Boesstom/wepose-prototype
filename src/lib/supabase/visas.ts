@@ -53,7 +53,7 @@ export async function getVisaById(id: string) {
 // ─── CREATE ─────────────────────────────────────────────
 export async function createVisa(
   visa: VisaInsert,
-  documents: { document_id: string; is_mandatory: boolean; notes?: string }[]
+  documents: { document_id: string; is_mandatory: boolean; notes?: string; config?: any }[]
 ) {
   // Insert visa
   const { data: visaData, error: visaError } = await supabase
@@ -71,6 +71,7 @@ export async function createVisa(
       document_id: doc.document_id,
       is_mandatory: doc.is_mandatory,
       notes: doc.notes || "",
+      config: doc.config || {},
     }));
 
     const { error: docError } = await supabase
@@ -87,7 +88,7 @@ export async function createVisa(
 export async function updateVisa(
   id: string,
   visa: VisaUpdate,
-  documents?: { document_id: string; is_mandatory: boolean; notes?: string }[]
+  documents?: { document_id: string; is_mandatory: boolean; notes?: string; config?: any }[]
 ) {
   // Update visa
   const { data: visaData, error: visaError } = await supabase
@@ -116,6 +117,7 @@ export async function updateVisa(
         document_id: doc.document_id,
         is_mandatory: doc.is_mandatory,
         notes: doc.notes || "",
+        config: doc.config || {},
       }));
 
       const { error: insertError } = await supabase

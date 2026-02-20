@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardHeader,
@@ -27,6 +27,25 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandSeparator,
+} from "@/components/ui/command";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
+
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Edit01Icon,
@@ -37,6 +56,12 @@ import {
   PassportIcon,
   Location01Icon,
   GlobalIcon,
+  FilterHorizontalIcon,
+  Tick02Icon,
+  Search01Icon,
+  Money03Icon,
+  Calendar03Icon,
+  Cancel01Icon
 } from "@hugeicons/core-free-icons";
 
 // Supabase integration
@@ -46,6 +71,8 @@ import { getCountries, type Address } from "@/lib/supabase/addresses";
 // ─────────────────────────────────────────────
 // Types & Helpers
 // ─────────────────────────────────────────────
+
+import { MultiSelectFilter } from "@/components/ui/multi-select-filter";
 
 interface CountryGroup {
   country: string;
@@ -99,6 +126,18 @@ function formatProcessingTime(visa: VisaWithDocuments) {
 function formatStayDuration(days: number | null) {
   return days ? `${days} Days` : "-";
 }
+
+// ─────────────────────────────────────────────
+// Filter Components
+// ─────────────────────────────────────────────
+
+interface FilterOption {
+  value: string;
+  label: string;
+  count?: number;
+}
+
+
 
 // ─────────────────────────────────────────────
 // Country Detail Dialog
@@ -281,7 +320,7 @@ function CardView({
   };
 
   if(!visas.length) {
-     return <div className="text-center py-12 text-muted-foreground">No visas found. Create one to get started.</div>
+     return <div className="text-center py-12 text-muted-foreground">No visas found. Try adjusting your filters.</div>
   }
 
   return (
@@ -412,7 +451,7 @@ function TableView({
   }, [countries]);
 
   if(!visas.length) {
-     return <div className="text-center py-12 text-muted-foreground">No visas found. Create one to get started.</div>
+     return <div className="text-center py-12 text-muted-foreground">No visas found. Try adjusting your filters.</div>
   }
 
   return (
@@ -423,6 +462,7 @@ function TableView({
             <TableHead>Country</TableHead>
             <TableHead>Visa Name</TableHead>
             <TableHead>Type</TableHead>
+            <TableHead>Category</TableHead>
             <TableHead>Price</TableHead>
             <TableHead>Method</TableHead>
             <TableHead className="text-right">Actions</TableHead>
@@ -442,6 +482,9 @@ function TableView({
               <TableCell className="font-medium">{visa.name}</TableCell>
               <TableCell>
                 <Badge variant="outline">{visa.type}</Badge>
+              </TableCell>
+              <TableCell>
+                {visa.category ? <Badge variant="secondary" className="text-[10px]">{visa.category}</Badge> : "-"}
               </TableCell>
               <TableCell>
                 {formatCurrency(visa.price, visa.currency)}
@@ -499,6 +542,17 @@ export function VisaTable() {
   const [countries, setCountries] = useState<Address[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Filters state
+  const [search, setSearch] = useState("");
+  const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
+  const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
+  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
+  const [selectedMethods, setSelectedMethods] = useState<Set<string>>(new Set());
+  
+  // Price range state
+  const [priceMin, setPriceMin] = useState<string>("");
+  const [priceMax, setPriceMax] = useState<string>("");
+
   const fetchData = useCallback(async () => {
     try {
         setLoading(true);
@@ -529,19 +583,212 @@ export function VisaTable() {
       }
   }
 
+  // Derive unique options for filters
+  const { countryOptions, typeOptions, categoryOptions, methodOptions } = useMemo(() => {
+    const countrySet = new Set<string>();
+    const typeSet = new Set<string>();
+    const categorySet = new Set<string>();
+    const methodSet = new Set<string>();
+
+    visas.forEach(v => {
+      if(v.country) countrySet.add(v.country);
+      if(v.type) typeSet.add(v.type);
+      if(v.category) categorySet.add(v.category);
+      if(v.application_method) methodSet.add(v.application_method);
+    });
+
+    return {
+      countryOptions: Array.from(countrySet).sort().map(c => ({ label: c, value: c })),
+      typeOptions: Array.from(typeSet).sort().map(t => ({ label: t, value: t })),
+      categoryOptions: Array.from(categorySet).sort().map(c => ({ label: c, value: c })),
+      methodOptions: Array.from(methodSet).sort().map(m => ({ label: m, value: m })),
+    };
+  }, [visas]);
+
+  // Filter Logic
+  const filteredVisas = useMemo(() => {
+    return visas.filter((visa) => {
+      // Search
+      const searchContent = `${visa.name} ${visa.country} ${visa.type}`.toLowerCase();
+      if (search && !searchContent.includes(search.toLowerCase())) return false;
+
+      // Multi-select filters
+      if (selectedCountries.size > 0 && !selectedCountries.has(visa.country || "")) return false;
+      if (selectedTypes.size > 0 && !selectedTypes.has(visa.type)) return false;
+      if (selectedCategories.size > 0 && !selectedCategories.has(visa.category || "")) return false;
+      if (selectedMethods.size > 0 && !selectedMethods.has(visa.application_method)) return false;
+
+      // Price Range
+      const pMin = priceMin ? parseFloat(priceMin) : 0;
+      const pMax = priceMax ? parseFloat(priceMax) : Infinity;
+      if (visa.price < pMin) return false;
+      if (priceMax && visa.price > pMax) return false;
+
+      return true;
+    });
+  }, [
+    visas, 
+    search, 
+    selectedCountries, 
+    selectedTypes, 
+    selectedCategories, 
+    selectedMethods,
+    priceMin,
+    priceMax
+  ]);
+
+  const toggleFilter = (set: Set<string>, value: string, setter: (newSet: Set<string>) => void) => {
+    const newSet = new Set(set);
+    if (newSet.has(value)) {
+      newSet.delete(value);
+    } else {
+      newSet.add(value);
+    }
+    setter(newSet);
+  };
+
+  const clearFilters = () => {
+    setSearch("");
+    setSelectedCountries(new Set());
+    setSelectedTypes(new Set());
+    setSelectedCategories(new Set());
+    setSelectedMethods(new Set());
+    setPriceMin("");
+    setPriceMax("");
+  };
+
+  const hasActiveFilters = 
+    search || 
+    selectedCountries.size > 0 || 
+    selectedTypes.size > 0 || 
+    selectedCategories.size > 0 || 
+    selectedMethods.size > 0 ||
+    priceMin ||
+    priceMax;
+
   if (loading) {
       return <div className="py-8 text-center text-muted-foreground">Loading visas...</div>;
   }
 
   return (
     <div className="space-y-4">
-      {/* View Toggle */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {visas.length} visa{visas.length !== 1 ? "s" : ""} across{" "}
-          {new Set(visas.map((v) => v.country)).size} countries
-        </p>
-        <div className="flex items-center gap-1 rounded-md border p-0.5 bg-muted/30">
+      {/* ─── FILTERS TOOLBAR ─── */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between p-1">
+        <div className="flex flex-1 items-center gap-2 overflow-x-auto no-scrollbar pb-2 md:pb-0">
+          {/* Search Input */}
+          <div className="relative w-full md:w-64 shrink-0">
+             <HugeiconsIcon
+                  icon={Search01Icon}
+                  strokeWidth={2}
+                  className="absolute left-2.5 top-2.5 size-4 text-muted-foreground"
+                />
+            <Input
+              placeholder="Search visas..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9 h-8 w-full transition-all focus:w-80"
+            />
+          </div>
+
+          <Separator orientation="vertical" className="h-8 hidden md:block" />
+
+          {/* Filters */}
+          <div className="flex items-center gap-2">
+            <MultiSelectFilter
+              title="Country"
+              options={countryOptions}
+              selectedValues={selectedCountries}
+              onSelect={(val) => toggleFilter(selectedCountries, val, setSelectedCountries)}
+              onClear={() => setSelectedCountries(new Set())}
+              icon={GlobalIcon}
+            />
+            <MultiSelectFilter
+              title="Type"
+              options={typeOptions}
+              selectedValues={selectedTypes}
+              onSelect={(val) => toggleFilter(selectedTypes, val, setSelectedTypes)}
+              onClear={() => setSelectedTypes(new Set())}
+              icon={PassportIcon}
+            />
+            <MultiSelectFilter
+              title="Category"
+              options={categoryOptions}
+              selectedValues={selectedCategories}
+              onSelect={(val) => toggleFilter(selectedCategories, val, setSelectedCategories)}
+              onClear={() => setSelectedCategories(new Set())}
+              icon={FilterHorizontalIcon}
+            />
+            <MultiSelectFilter
+              title="Method"
+              options={methodOptions}
+              selectedValues={selectedMethods}
+              onSelect={(val) => toggleFilter(selectedMethods, val, setSelectedMethods)}
+              onClear={() => setSelectedMethods(new Set())}
+              icon={DashboardSquare01Icon}
+            />
+
+            {/* Price Range Filter */}
+            <Popover>
+              <PopoverTrigger className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-8 border-dashed")}>
+                  <HugeiconsIcon icon={Money03Icon} strokeWidth={2} className="mr-2 size-3.5" />
+                  Price Range
+                  {(priceMin || priceMax) && (
+                     <>
+                      <Separator orientation="vertical" className="mx-2 h-4" />
+                       <Badge variant="secondary" className="rounded-sm px-1 font-normal">Active</Badge>
+                     </>
+                  )}
+              </PopoverTrigger>
+              <PopoverContent className="w-80" align="start">
+                <div className="grid gap-4">
+                  <div className="space-y-2">
+                    <h4 className="font-medium leading-none">Price Range</h4>
+                    <p className="text-xs text-muted-foreground">
+                      Set the price range for the visa.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="grid gap-2">
+                      <Label htmlFor="minPrice">Min</Label>
+                      <Input
+                        id="minPrice"
+                        type="number"
+                        placeholder="0"
+                        value={priceMin}
+                        onChange={(e) => setPriceMin(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="maxPrice">Max</Label>
+                      <Input
+                        id="maxPrice"
+                        type="number"
+                        placeholder="No limit"
+                        value={priceMax}
+                        onChange={(e) => setPriceMax(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+
+            {hasActiveFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 lg:px-3 text-muted-foreground"
+                onClick={clearFilters}
+              >
+                Reset
+                <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="ml-2 size-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* View Toggle */}
+        <div className="flex items-center gap-1 rounded-md border p-0.5 bg-muted/30 shrink-0">
           <Button
             variant={viewMode === "card" ? "default" : "ghost"}
             size="sm"
@@ -571,11 +818,17 @@ export function VisaTable() {
         </div>
       </div>
 
+       {/* Results Summary */}
+       <div className="px-1 text-sm text-muted-foreground">
+          Showing {filteredVisas.length} visa{filteredVisas.length !== 1 ? "s" : ""}
+          {filteredVisas.length !== visas.length && ` (filtered from ${visas.length})`}
+       </div>
+
       {/* Content */}
       {viewMode === "card" ? (
-          <CardView visas={visas} countries={countries} onDelete={handleDelete} />
+          <CardView visas={filteredVisas} countries={countries} onDelete={handleDelete} />
       ) : (
-          <TableView visas={visas} countries={countries} onDelete={handleDelete} />
+          <TableView visas={filteredVisas} countries={countries} onDelete={handleDelete} />
       )}
     </div>
   );

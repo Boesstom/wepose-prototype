@@ -17,6 +17,18 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge"
 import { SearchableSelect, type SearchableSelectOption } from "@/components/ui/searchable-select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+
 import { HugeiconsIcon } from "@hugeicons/react";
 import { 
     CheckmarkCircle01Icon, 
@@ -24,81 +36,100 @@ import {
     DocumentValidationIcon, 
     Settings01Icon,
     Globe02Icon,
-    Loading03Icon
+    Loading03Icon,
+    PlusSignIcon,
+    Delete02Icon,
+    QuestionIcon,
+    Clock01Icon,
+    Calendar03Icon
 } from "@hugeicons/core-free-icons";
 
 // Supabase Imports
 import { getCountries, getCities, type Address } from "@/lib/supabase/addresses";
 import { getDocuments, type Document } from "@/lib/supabase/documents";
 import { createVisa, updateVisa, getVisaById } from "@/lib/supabase/visas";
+import { getPurposes, addPurpose, type Purpose } from "@/lib/supabase/purposes";
+import type { Question, VisaDocumentConfig } from "@/types/visa";
+// ─── TYPES & CONSTANTS ───────────────────────────────────────────────
 
-const SPONSOR_TYPES = [
-    "Diri Sendiri",
-    "Keluarga Inti",
-    "Perusahaan/Kantor",
-    "Invitation",
-    "Lain-lain"
-];
-
-// Extended Document Type for Form State
 type FormDocument = Document & {
     isSelected: boolean;
     isMandatory: boolean;
     notes: string;
+    config: VisaDocumentConfig;
 };
 
+export interface JobStatus {
+  id: string;
+  name: string;
+}
+
+// In case the DB fetch fails, we keep a fallback here
+const FALLBACK_JOB_STATUS_OPTIONS = [
+  "Employee", "Business Owner", "Freelance", "Student", "Housewife", "Retiree", "Unemployed"
+];
+
+const PROCESSING_TYPES = [
+    { value: 'fix', label: 'Fixed Days' },
+    { value: 'range', label: 'Range Days' },
+];
+
 interface FormData {
-  // Basic Information
+  // 1. Identity
   name: string;
   country: string;
-  price: string;
-  currency: string;
-  type: string;
+  purpose: string; // e.g. Tourist, Business
   category?: 'First Time' | 'Extension';
+  type: string; // Single, Double, Multiple
 
-  // Durations & Times (Integers for days, Date for dates)
-  // Lama Proses
-  processingTimeType: 'fix' | 'range';
-  processingTimeFix?: string; // integer
-  processingTimeMin?: string; // integer
-  processingTimeMax?: string; // integer
-
-  // Masa Berlaku
+  // 2. Processing & Validity
+  stayDurationType: 'fix' | 'range';
+  stayDurationFix: string;
+  stayDurationMin: string;
+  stayDurationMax: string;
+  
   validityType: 'fix' | 'range';
-  validityFix?: string; // integer (days)
-  validityMin?: string; // integer (days)
-  validityMax?: string; // integer (days)
+  validityFix: string; 
+  validityMin: string;
+  validityMax: string;
 
-  stayDuration: string; // integer (days) "Lama masa stay"
-  earliestApplyTime: string; // integer (days) "Waktu tercepat apply"
+  processingTimeType: 'fix' | 'range';
+  processingTimeFix: string; // Internal (Wepose)
+  processingTimeMin: string;
+  processingTimeMax: string;
   
-  // Operational Details
-  isNeedAppointment: boolean;
-  isApplicantPresenceRequired: boolean; // "is perlu kehadiran orangnya sendiri"
-  applicationMethod: string; // Online, Offline
-  
-  // Location (Offline only)
-  locationType: 'appointed' | 'available';
-  appointedCity?: string; // Kept for the main "Appointed City" input if needed
-  appointedCitiesList: string[]; // List of cities for appointed
-  availableCitiesList: string[]; // List of cities for available
-  
-  needPhysicalPassport: boolean;
+  processCenterType: 'fix' | 'range';
+  processCenterFix: string;
+  processCenterMin: string;
+  processCenterMax: string;
 
-  // Requirements (Syarat)
-  // Status Requirements
-  jobRequirement: string;
-  marriageRequirement: string;
-  minAge?: string; // integer
-  maxAge?: string; // integer
-  relationshipRequirement: string;
-  historyRequirement: string;
+  earliestApplyTime: string;
+
+  // 4. Requirements (JSON Data mapped to form fields)
+  minAge: string;
+  maxAge: string;
+  reqJobStatus: string[];
+  reqMinBalance: string; // Financial
+  reqTravelHistory: string; 
+  reqMarriage: string;
+  reqRelationship: string;
   
-  // Sponsors
   allowedSponsors: string[];
-  sponsorOtherDetails: string; // New: Details for "Lain-lain"
+  sponsorOtherDetails: string;
 
-  // Documents (selection state maintained in separate local state or merged here)
+  // 5. Operations
+  isNeedAppointment: boolean;
+  isApplicantPresenceRequired: boolean;
+  applicationMethod: string; // Online/Offline
+  needPhysicalPassport: boolean;
+  
+  locationType: 'appointed' | 'available';
+  appointedCity: string;
+  appointedCitiesList: string[];
+  availableCitiesList: string[];
+
+  // 6. Questions (JSON list)
+  questions: Question[]; 
 }
 
 interface VisaFormProps {
@@ -117,119 +148,149 @@ export function VisaForm({ visaId }: VisaFormProps) {
   // Master Data
   const [masterCountries, setMasterCountries] = useState<Address[]>([]);
   const [masterCities, setMasterCities] = useState<Address[]>([]);
+  const [masterPurposes, setMasterPurposes] = useState<Purpose[]>([]);
+  const [masterJobStatuses, setMasterJobStatuses] = useState<JobStatus[]>([]);
   const [documents, setDocuments] = useState<FormDocument[]>([]);
 
   // Form Data
   const [formData, setFormData] = useState<FormData>({
     name: "",
     country: "",
-    price: "",
-    currency: "IDR",
-    type: "Single",
+    purpose: "Tourist",
     category: categoryParam || undefined,
+    type: "Single",
     
-    processingTimeType: 'fix',
-    processingTimeFix: "",
-    processingTimeMin: "",
-    processingTimeMax: "",
+    stayDurationType: "fix",
+    stayDurationFix: "",
+    stayDurationMin: "",
+    stayDurationMax: "",
     
-    validityType: 'fix',
+    validityType: "fix",
     validityFix: "",
     validityMin: "",
     validityMax: "",
     
-    stayDuration: "",
-    earliestApplyTime: "",
+    processingTimeType: "fix",
+    processingTimeFix: "",
+    processingTimeMin: "",
+    processingTimeMax: "",
     
+    processCenterType: "fix",
+    processCenterFix: "",
+    processCenterMin: "",
+    processCenterMax: "",
+    
+    earliestApplyTime: "",
+
+    minAge: "",
+    maxAge: "",
+    reqJobStatus: [],
+    reqMinBalance: "",
+    reqTravelHistory: "",
+    reqMarriage: "",
+    reqRelationship: "",
+    allowedSponsors: [],
+    sponsorOtherDetails: "",
+
     isNeedAppointment: false,
     isApplicantPresenceRequired: false,
     applicationMethod: "Online",
-    
+    needPhysicalPassport: false,
     locationType: "appointed",
     appointedCity: "",
     appointedCitiesList: [],
     availableCitiesList: [],
-    
-    needPhysicalPassport: false,
-    
-    jobRequirement: "",
-    marriageRequirement: "",
-    minAge: "",
-    maxAge: "",
-    relationshipRequirement: "",
-    historyRequirement: "",
-    
-    allowedSponsors: [],
-    sponsorOtherDetails: "",
+
+    questions: []
   });
 
-  // Fetch Data on Mount (Master + Edit Data)
+  // Current configuring document (Dialog)
+  const [configuringDocId, setConfiguringDocId] = useState<string | null>(null);
+
+  // ─── HOOKS ─────────────────────────────────────────────────────────────
+
   useEffect(() => {
       async function loadData() {
           try {
-              // 1. Fetch Master Data
-              const [countriesData, citiesData, docsData] = await Promise.all([
+              const [countriesData, citiesData, docsData, purposesData, { getJobStatuses }] = await Promise.all([
                   getCountries(),
                   getCities(),
-                  getDocuments()
+                  getDocuments(),
+                  getPurposes(),
+                  import('@/lib/supabase/jobStatuses')
               ]);
+              const jobStatData = await getJobStatuses();
               setMasterCountries(countriesData);
               setMasterCities(citiesData);
+              setMasterPurposes(purposesData);
+              setMasterJobStatuses(jobStatData);
               
               let initialDocs = docsData.map(d => ({
                   ...d,
                   isSelected: false,
                   isMandatory: false,
-                  notes: ""
+                  notes: "",
+                  config: {}
               }));
 
-              // 2. Fetch Visa if ID present (Edit Mode)
               if (visaId) {
                   const visa = await getVisaById(visaId);
                   if (visa) {
                       // Map to FormData
-                      setFormData({
+                      const breakdown = (visa.pricing_breakdown as any) || {};
+                      const reqs = (visa.requirements_data as any) || {};
+                      
+                      setFormData(prev => ({
+                          ...prev,
                           name: visa.name,
                           country: visa.country,
-                          price: visa.price.toString(),
-                          currency: visa.currency,
-                          type: visa.type,
+                          purpose: visa.purpose || "Tourist",
                           category: (visa.category as any) || undefined,
+                          type: visa.type,
                           
-                          processingTimeType: (visa.processing_time_type as any) || 'fix',
-                          processingTimeFix: visa.processing_time_fix?.toString() || "",
-                          processingTimeMin: visa.processing_time_min?.toString() || "",
-                          processingTimeMax: visa.processing_time_max?.toString() || "",
+                          stayDurationType: (visa.stay_duration_type as any) || 'fix',
+                          stayDurationFix: visa.stay_duration_fix?.toString() || visa.stay_duration?.toString() || "", // fallback to old stay_duration
+                          stayDurationMin: visa.stay_duration_min?.toString() || "",
+                          stayDurationMax: visa.stay_duration_max?.toString() || "",
                           
                           validityType: (visa.validity_type as any) || 'fix',
                           validityFix: visa.validity_fix?.toString() || "",
                           validityMin: visa.validity_min?.toString() || "",
                           validityMax: visa.validity_max?.toString() || "",
                           
-                          stayDuration: visa.stay_duration?.toString() || "",
-                          earliestApplyTime: visa.earliest_apply_time?.toString() || "",
+                          processingTimeType: (visa.processing_time_type as any) || 'fix',
+                          processingTimeFix: visa.processing_time_fix?.toString() || "",
+                          processingTimeMin: visa.processing_time_min?.toString() || "",
+                          processingTimeMax: visa.processing_time_max?.toString() || "",
                           
+                          processCenterType: (visa.process_center_type as any) || 'fix',
+                          processCenterFix: visa.process_center_fix?.toString() || "",
+                          processCenterMin: visa.process_center_min?.toString() || "",
+                          processCenterMax: visa.process_center_max?.toString() || "",
+                          
+                          earliestApplyTime: visa.earliest_apply_time?.toString() || "",
+
+                          minAge: visa.min_age?.toString() || "",
+                          maxAge: visa.max_age?.toString() || "",
+                          reqJobStatus: reqs.job_status || [],
+                          reqMinBalance: reqs.min_balance?.toString() || "",
+                          reqTravelHistory: visa.history_requirement || "",
+                          reqMarriage: visa.marriage_requirement || "",
+                          reqRelationship: visa.relationship_requirement || "",
+                          allowedSponsors: visa.allowed_sponsors || [],
+                          sponsorOtherDetails: visa.sponsor_other_details || "",
+
                           isNeedAppointment: visa.is_need_appointment,
                           isApplicantPresenceRequired: visa.is_applicant_presence_required,
                           applicationMethod: visa.application_method,
-                          
+                          needPhysicalPassport: visa.need_physical_passport,
                           locationType: (visa.location_type as any) || 'appointed',
                           appointedCity: visa.appointed_city || "",
                           appointedCitiesList: visa.appointed_cities_list || [],
                           availableCitiesList: visa.available_cities_list || [],
-                          
-                          needPhysicalPassport: visa.need_physical_passport,
-                          
-                          jobRequirement: visa.job_requirement || "",
-                          marriageRequirement: visa.marriage_requirement || "",
-                          minAge: visa.min_age?.toString() || "",
-                          maxAge: visa.max_age?.toString() || "",
-                          relationshipRequirement: visa.relationship_requirement || "",
-                          historyRequirement: visa.history_requirement || "",
-                          
-                          allowedSponsors: visa.allowed_sponsors || [],
-                          sponsorOtherDetails: visa.sponsor_other_details || "",
-                      });
+
+                          questions: (visa.questions_data as unknown as Question[]) || []
+                      }));
 
                       // Map Documents
                       const visaDocMap = new Map();
@@ -244,7 +305,8 @@ export function VisaForm({ visaId }: VisaFormProps) {
                                   ...d, 
                                   isSelected: true, 
                                   isMandatory: vd.is_mandatory, 
-                                  notes: vd.notes || "" 
+                                  notes: vd.notes || "",
+                                  config: (vd.config as VisaDocumentConfig) || {}
                               };
                           }
                           return d;
@@ -255,7 +317,6 @@ export function VisaForm({ visaId }: VisaFormProps) {
               setDocuments(initialDocs);
           } catch (error) {
               console.error("Failed to load data", error);
-              // alert("Failed to load required data.");
           } finally {
               setIsLoadingMaster(false);
           }
@@ -263,15 +324,50 @@ export function VisaForm({ visaId }: VisaFormProps) {
       loadData();
   }, [visaId]);
 
-  // Searchable select options
-  const countryOptions: SearchableSelectOption[] = useMemo(() => 
+  // ─── HELPERS ───────────────────────────────────────────────────────────
+
+  const updateFormData = (field: keyof FormData, value: any) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const updateNestedFormData = (parent: keyof FormData, key: string, value: any) => {
+      // For simple nested updates if needed
+  };
+
+  const handleCreatePurpose = async (newPurpose: string) => {
+      const added = await addPurpose(newPurpose);
+      if (added) {
+          setMasterPurposes(prev => [...prev, added].sort((a,b) => a.name.localeCompare(b.name)));
+          updateFormData('purpose', added.name);
+      }
+  };
+
+  const handleCreateJobStatus = async (newJobStatus: string) => {
+      const { addJobStatus } = await import('@/lib/supabase/jobStatuses');
+      const added = await addJobStatus(newJobStatus);
+      if (added) {
+          setMasterJobStatuses(prev => [...prev, added].sort((a,b) => a.name.localeCompare(b.name)));
+          updateFormData('reqJobStatus', [...formData.reqJobStatus, added.name]);
+      }
+  };
+
+  const purposeOptions = useMemo(() => 
+    masterPurposes.map(p => ({
+        value: p.name,
+        label: p.name
+    })), [masterPurposes]);
+    
+  const jobStatusOptions = useMemo(() => 
+    masterJobStatuses.map(j => j.name), [masterJobStatuses]);
+
+  const countryOptions = useMemo(() => 
     masterCountries.map(c => ({
       value: c.name,
       label: c.name,
       icon: c.flag ? <span>{c.flag}</span> : undefined,
     })), [masterCountries]);
 
-  const cityOptions: SearchableSelectOption[] = useMemo(() => 
+  const cityOptions = useMemo(() => 
     masterCities.map(city => {
       const country = masterCountries.find(c => c.id === city.parent_id);
       return {
@@ -280,149 +376,131 @@ export function VisaForm({ visaId }: VisaFormProps) {
       };
     }), [masterCities, masterCountries]);
 
-  // Filtered city options
-  const appointedCityOptions = useMemo(() => 
-    cityOptions.filter(opt => !formData.appointedCitiesList.includes(opt.value)),
-    [cityOptions, formData.appointedCitiesList]);
-
-  const availableCityOptions = useMemo(() => 
-    cityOptions.filter(opt => !formData.availableCitiesList.includes(opt.value)),
-    [cityOptions, formData.availableCitiesList]);
-
-  const updateFormData = (field: keyof FormData, value: any) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const toggleSponsor = (sponsor: string) => {
-    setFormData(prev => {
-        const current = prev.allowedSponsors;
-        if (current.includes(sponsor)) {
-            return { ...prev, allowedSponsors: current.filter(s => s !== sponsor) };
-        } else {
-            return { ...prev, allowedSponsors: [...current, sponsor] };
-        }
-    });
-  };
-
+  // Document Toggles
   const toggleDocument = (id: string) => {
-    setDocuments((prev) =>
-      prev.map((doc) =>
-        doc.id === id ? { ...doc, isSelected: !doc.isSelected } : doc
-      )
-    );
+    setDocuments(prev => prev.map(d => d.id === id ? { ...d, isSelected: !d.isSelected } : d));
   };
 
-  const toggleDocumentMandatory = (id: string) => {
-    setDocuments((prev) =>
-      prev.map((doc) =>
-        doc.id === id ? { ...doc, isMandatory: !doc.isMandatory } : doc
-      )
-    );
+  const updateDocumentConfig = (id: string, field: keyof VisaDocumentConfig, value: any) => {
+      setDocuments(prev => prev.map(d => 
+          d.id === id ? { ...d, config: { ...d.config, [field]: value } } : d
+      ));
   };
 
-  const updateDocumentNote = (id: string, note: string) => {
-    setDocuments((prev) =>
-      prev.map((doc) =>
-        doc.id === id ? { ...doc, notes: note } : doc
-      )
-    );
+  // Questions
+  const addQuestion = () => {
+      setFormData(prev => ({
+          ...prev,
+          questions: [...prev.questions, { id: crypto.randomUUID(), text: "", type: "text", required: true }]
+      }));
   };
 
-  const addCity = (field: 'appointedCitiesList' | 'availableCitiesList', city: string) => {
-    if (!city.trim()) return;
-    setFormData(prev => ({
-        ...prev,
-        [field]: [...prev[field], city]
-    }));
-  };
+    const removeQuestion = (id: string) => {
+        setFormData(prev => ({ ...prev, questions: prev.questions.filter(q => q.id !== id) }));
+    };
 
-  const removeCity = (field: 'appointedCitiesList' | 'availableCitiesList', index: number) => {
-    setFormData(prev => ({
-        ...prev,
-        [field]: prev[field].filter((_, i) => i !== index)
-    }));
-  };
+    const updateQuestion = (id: string, field: keyof Question, value: any) => {
+        setFormData(prev => ({
+            ...prev,
+            questions: prev.questions.map(q => q.id === id ? { ...q, [field]: value } : q)
+        }));
+    };
+
+
+  // ─── SUBMISSION ────────────────────────────────────────────────────────
 
   const handleSubmit = async () => {
-       if (!formData.name || !formData.country || !formData.price) {
-           alert("Please fill in required fields (Name, Country, Price)");
-           return;
-       }
+    if (!formData.name || !formData.country) {
+        alert("Please fill in required fields (Name, Country)");
+        return;
+    }
 
-       setIsSubmitting(true);
-       try {
-           // Prepare visa object for Supabase
-           const visaInput = {
-               name: formData.name,
-               country: formData.country,
-               price: parseFloat(formData.price) || 0,
-               currency: formData.currency,
-               type: formData.type,
-               category: formData.category || null,
-               
-               // Times
-               stay_duration: parseInt(formData.stayDuration) || null,
-               earliest_apply_time: parseInt(formData.earliestApplyTime) || null,
-               
-               processing_time_type: formData.processingTimeType,
-               processing_time_fix: formData.processingTimeType === 'fix' ? (parseInt(formData.processingTimeFix || "0") || null) : null,
-               processing_time_min: formData.processingTimeType === 'range' ? (parseInt(formData.processingTimeMin || "0") || null) : null,
-               processing_time_max: formData.processingTimeType === 'range' ? (parseInt(formData.processingTimeMax || "0") || null) : null,
-               
-               validity_type: formData.validityType,
-               validity_fix: formData.validityType === 'fix' ? (parseInt(formData.validityFix || "0") || null) : null,
-               validity_min: formData.validityType === 'range' ? (parseInt(formData.validityMin || "0") || null) : null,
-               validity_max: formData.validityType === 'range' ? (parseInt(formData.validityMax || "0") || null) : null,
-               
-               // Operational
-               application_method: formData.applicationMethod,
-               is_need_appointment: formData.isNeedAppointment,
-               is_applicant_presence_required: formData.isApplicantPresenceRequired,
-               need_physical_passport: formData.needPhysicalPassport,
-               
-               // Location
-               location_type: formData.applicationMethod === 'Offline' ? formData.locationType : null,
-               appointed_city: formData.applicationMethod === 'Offline' && formData.locationType === 'appointed' ? formData.appointedCity || null : null,
-               appointed_cities_list: formData.applicationMethod === 'Offline' && formData.locationType === 'appointed' ? formData.appointedCitiesList : [],
-               available_cities_list: formData.applicationMethod === 'Offline' && formData.locationType === 'available' ? formData.availableCitiesList : [],
-               
-               // Requirements
-               job_requirement: formData.jobRequirement || null,
-               marriage_requirement: formData.marriageRequirement || null,
-               relationship_requirement: formData.relationshipRequirement || null,
-               history_requirement: formData.historyRequirement || null,
-               min_age: parseInt(formData.minAge || "0") || null,
-               max_age: parseInt(formData.maxAge || "0") || null,
-               
-               allowed_sponsors: formData.allowedSponsors,
-               sponsor_other_details: formData.sponsorOtherDetails || null,
-           };
+    setIsSubmitting(true);
+    try {
+        const visaInput: any = {
+            name: formData.name,
+            country: formData.country,
+            purpose: formData.purpose,
+            category: formData.category || null,
+            type: formData.type,
+            
+            // Times
+            stay_duration: parseInt(formData.stayDurationFix) || null, // legacy support or master value
+            stay_duration_type: formData.stayDurationType,
+            stay_duration_fix: parseInt(formData.stayDurationFix) || null,
+            stay_duration_min: parseInt(formData.stayDurationMin) || null,
+            stay_duration_max: parseInt(formData.stayDurationMax) || null,
 
-           // Prepare documents mapping
-           const selectedDocs = documents
-               .filter(d => d.isSelected)
-               .map(d => ({
-                   document_id: d.id,
-                   is_mandatory: d.isMandatory,
-                   notes: d.notes
-               }));
+            earliest_apply_time: parseInt(formData.earliestApplyTime) || null,
+            
+            processing_time_type: formData.processingTimeType,
+            processing_time_fix: parseInt(formData.processingTimeFix) || null,
+            processing_time_min: parseInt(formData.processingTimeMin) || null,
+            processing_time_max: parseInt(formData.processingTimeMax) || null,
 
-           if (visaId) {
-               await updateVisa(visaId, visaInput, selectedDocs);
-               alert("Visa updated successfully!");
-           } else {
-               await createVisa(visaInput, selectedDocs);
-               alert("Visa created successfully!");
-           }
-           
-           router.push('/dashboard/visa');
-           
-       } catch (error) {
-           console.error("Submission failed", error);
-           alert("Failed to save visa. See console for details.");
-       } finally {
-           setIsSubmitting(false);
-       }
+            process_center_type: formData.processCenterType,
+            process_center_fix: parseInt(formData.processCenterFix) || null,
+            process_center_min: parseInt(formData.processCenterMin) || null,
+            process_center_max: parseInt(formData.processCenterMax) || null,
+            
+            validity_type: formData.validityType,
+            validity_fix: parseInt(formData.validityFix) || null,
+            validity_min: parseInt(formData.validityMin) || null,
+            validity_max: parseInt(formData.validityMax) || null,
+            
+            // Requirements
+            min_age: parseInt(formData.minAge) || null,
+            max_age: parseInt(formData.maxAge) || null,
+            job_requirement: null, // deprecated or use if single field needed
+            marriage_requirement: formData.reqMarriage || null,
+            relationship_requirement: formData.reqRelationship || null,
+            history_requirement: formData.reqTravelHistory || null, 
+            allowed_sponsors: formData.allowedSponsors,
+            sponsor_other_details: formData.sponsorOtherDetails || null,
+            
+            requirements_data: {
+                job_status: formData.reqJobStatus,
+                min_balance: parseFloat(formData.reqMinBalance) || 0,
+            },
+
+            // Operations
+            is_need_appointment: formData.isNeedAppointment,
+            is_applicant_presence_required: formData.isApplicantPresenceRequired,
+            application_method: formData.applicationMethod,
+            need_physical_passport: formData.needPhysicalPassport,
+            location_type: formData.locationType,
+            appointed_city: formData.appointedCity || null,
+            appointed_cities_list: formData.appointedCitiesList,
+            available_cities_list: formData.availableCitiesList,
+            
+            questions_data: formData.questions as any,
+        };
+
+        const selectedDocs = documents
+            .filter(d => d.isSelected)
+            .map(d => ({
+                document_id: d.id,
+                is_mandatory: d.isMandatory,
+                notes: d.notes,
+                config: d.config
+            }));
+
+        if (visaId) {
+            await updateVisa(visaId, visaInput, selectedDocs);
+            alert("Visa updated!");
+        } else {
+            await createVisa(visaInput, selectedDocs);
+            alert("Visa created!");
+        }
+        
+        router.push('/dashboard/visa');
+        
+    } catch (error) {
+        console.error("Submission failed", error);
+        alert("Failed to save visa.");
+    } finally {
+        setIsSubmitting(false);
+    }
   };
 
   if (isLoadingMaster) {
@@ -432,585 +510,461 @@ export function VisaForm({ visaId }: VisaFormProps) {
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 max-w-5xl mx-auto pb-20">
-      {/* Header Badge */}
-      {formData.category && (
-          <div className="bg-primary/10 text-primary px-4 py-2 rounded-md font-medium flex items-center gap-2">
-              <HugeiconsIcon icon={PassportIcon} className="size-5" strokeWidth={2} />
-              {visaId ? "Editing Visa" : "Creating Visa for:"} {formData.category}
+    <div className="space-y-6 pb-20 max-w-6xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+          <div>
+              <h2 className="text-2xl font-bold tracking-tight">
+                  {visaId ? "Edit Visa" : "Create New Visa"}
+              </h2>
+              <p className="text-muted-foreground">Configure detailed visa requirements and pricing.</p>
           </div>
-      )}
-      
-      {/* 1. Basic Information & Validity */}
-      <Card>
-          <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                  <HugeiconsIcon icon={PassportIcon} className="size-5 text-primary" strokeWidth={2} />
-                  Basic Information & Validity
-              </CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Basic Fields */}
-                <div className="space-y-2">
-                  <Label htmlFor="name">Visa Name</Label>
-                  <Input
-                    id="name"
-                    placeholder="e.g. Tourist Visa"
-                    value={formData.name}
-                    onChange={(e) => updateFormData("name", e.target.value)}
-                  />
-                </div>
-                 <div className="space-y-2">
-                  <Label htmlFor="country">Country</Label>
-                  <SearchableSelect
-                    options={countryOptions}
-                    value={formData.country}
-                    onValueChange={(val) => updateFormData("country", val)}
-                    placeholder="Select country"
-                    searchPlaceholder="Search country..."
-                    emptyMessage="No country found."
-                    icon={<HugeiconsIcon icon={Globe02Icon} className="h-4 w-4 text-muted-foreground" strokeWidth={2} />}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="price">Price (IDR)</Label>
-                  <Input
-                    id="price"
-                    type="number"
-                    placeholder="0"
-                    value={formData.price}
-                    onChange={(e) => updateFormData("price", e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="type">Visa Type</Label>
-                  <Select
-                    value={formData.type}
-                    onValueChange={(val) => updateFormData("type", val)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Single">Single Entry</SelectItem>
-                      <SelectItem value="Multiple">Multiple Entry</SelectItem>
-                      <SelectItem value="Double">Double Entry</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+          <div className="flex gap-2">
+               <Button variant="outline" onClick={() => router.back()}>Cancel</Button>
+               <Button onClick={handleSubmit} disabled={isSubmitting}>
+                   {isSubmitting && <HugeiconsIcon icon={Loading03Icon} className="animate-spin mr-2 size-4" />}
+                   Save Visa
+               </Button>
+          </div>
+      </div>
 
-                {/* Processing Time */}
-                <div className="space-y-3 md:col-span-2 border p-4 rounded-md bg-muted/10">
-                    <Label className="font-semibold text-base">Processing Time (Lama Proses)</Label>
-                    <div className="flex gap-4">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input 
-                                type="radio" 
-                                name="processingTimeType"
-                                checked={formData.processingTimeType === 'fix'}
-                                onChange={() => updateFormData('processingTimeType', 'fix')}
-                                className="accent-primary"
-                            />
-                            <span className="text-sm">Fix Day</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input 
-                                type="radio" 
-                                name="processingTimeType"
-                                checked={formData.processingTimeType === 'range'}
-                                onChange={() => updateFormData('processingTimeType', 'range')}
-                                className="accent-primary"
-                            />
-                            <span className="text-sm">Range Day</span>
-                        </label>
+      <Tabs defaultValue="identity" className="w-full">
+        <TabsList className="grid w-full grid-cols-5 h-auto p-1 bg-muted/50 rounded-lg">
+          <TabsTrigger value="identity" className="py-2.5">Identity</TabsTrigger>
+          <TabsTrigger value="process" className="py-2.5">Process</TabsTrigger>
+          <TabsTrigger value="requirements" className="py-2.5">Requirements</TabsTrigger>
+          <TabsTrigger value="documents" className="py-2.5">Documents</TabsTrigger>
+          <TabsTrigger value="questions" className="py-2.5">Questions</TabsTrigger>
+        </TabsList>
+        
+        {/* 1. IDENTITY & BASIC INFO */}
+        <TabsContent value="identity" className="space-y-4 py-4 animate-in fade-in slide-in-from-left-4 duration-300">
+            <Card className="overflow-visible">
+                <CardHeader><CardTitle>Basic Information</CardTitle></CardHeader>
+                <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                        <Label>Country</Label>
+                        <SearchableSelect 
+                            options={countryOptions}
+                            value={formData.country}
+                            onValueChange={v => updateFormData('country', v)}
+                            placeholder="Select Country"
+                        />
                     </div>
+                    <div className="space-y-2">
+                        <Label>Visa Name</Label>
+                        <Input value={formData.name} onChange={e => updateFormData('name', e.target.value)} placeholder="e.g. Tourist Visa Single Entry" />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Purpose</Label>
+                        <SearchableSelect 
+                            options={purposeOptions}
+                            value={formData.purpose}
+                            onValueChange={v => updateFormData('purpose', v)}
+                            onCreate={handleCreatePurpose}
+                            placeholder="Select Purpose"
+                            searchPlaceholder="Search or type to add..."
+                            emptyMessage="No purpose found."
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Category</Label>
+                        <Select value={formData.category || "First Time"} onValueChange={v => updateFormData('category', v)}>
+                             <SelectTrigger><SelectValue /></SelectTrigger>
+                             <SelectContent>
+                                 <SelectItem value="First Time">First Time</SelectItem>
+                                 <SelectItem value="Extension">Extension</SelectItem>
+                             </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Entry Type</Label>
+                         <Select value={formData.type} onValueChange={v => updateFormData('type', v)}>
+                             <SelectTrigger><SelectValue /></SelectTrigger>
+                             <SelectContent>
+                                 <SelectItem value="Single">Single Entry</SelectItem>
+                                 <SelectItem value="Double">Double Entry</SelectItem>
+                                 <SelectItem value="Multiple">Multiple Entry</SelectItem>
+                             </SelectContent>
+                        </Select>
+                    </div>
+                </CardContent>
+            </Card>
+        </TabsContent>
 
-                    {formData.processingTimeType === 'fix' ? (
-                        <div className="flex items-center gap-2 max-w-xs">
-                             <Input 
-                                type="number" 
-                                placeholder="Days" 
-                                value={formData.processingTimeFix}
-                                onChange={(e) => updateFormData('processingTimeFix', e.target.value)}
-                             />
-                             <span className="text-sm text-muted-foreground">Days</span>
-                        </div>
-                    ) : (
-                        <div className="space-y-2">
-                            <div className="flex items-center gap-2 max-w-sm">
-                                <Input 
-                                    type="number" 
-                                    placeholder="Min Days" 
-                                    value={formData.processingTimeMin}
-                                    onChange={(e) => updateFormData('processingTimeMin', e.target.value)}
-                                />
-                                <span className="text-muted-foreground">-</span>
-                                <Input 
-                                    type="number" 
-                                    placeholder="Max Days" 
-                                    value={formData.processingTimeMax}
-                                    onChange={(e) => updateFormData('processingTimeMax', e.target.value)}
-                                />
-                                <span className="text-sm text-muted-foreground">Days</span>
-                            </div>
-                            <p className="text-xs text-muted-foreground italic">
-                                * Range depends on document strength (kekuatan dokumen).
-                            </p>
-                        </div>
-                    )}
-                </div>
-
-                {/* Validity Period */}
-                <div className="space-y-3 md:col-span-2 border p-4 rounded-md bg-muted/10">
-                    <Label className="font-semibold text-base">Validity Period & Stay (Masa Berlaku)</Label>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                         {/* Validity */}
-                         <div className="space-y-2">
-                             <Label className="text-sm">Validity Duration</Label>
-                             <div className="flex gap-4 mb-2">
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input 
-                                        type="radio" 
-                                        name="validityType"
-                                        checked={formData.validityType === 'fix'}
-                                        onChange={() => updateFormData('validityType', 'fix')}
-                                        className="accent-primary"
-                                    />
-                                    <span className="text-sm">Fix</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input 
-                                        type="radio" 
-                                        name="validityType"
-                                        checked={formData.validityType === 'range'}
-                                        onChange={() => updateFormData('validityType', 'range')}
-                                        className="accent-primary"
-                                    />
-                                    <span className="text-sm">Range</span>
-                                </label>
-                            </div>
-                            
-                            {formData.validityType === 'fix' ? (
-                                <div className="flex items-center gap-2">
-                                     <Input 
-                                        type="number" 
-                                        placeholder="Validity Days" 
-                                        value={formData.validityFix}
-                                        onChange={(e) => updateFormData('validityFix', e.target.value)}
-                                     />
-                                     <span className="text-sm text-muted-foreground">Days</span>
-                                </div>
+        {/* 2. PROCESS & VALIDITY */}
+        <TabsContent value="process" className="space-y-4 py-4 animate-in fade-in slide-in-from-left-4 duration-300">
+             <Card>
+                <CardHeader><CardTitle className="flex items-center gap-2"><HugeiconsIcon icon={Calendar03Icon} className="size-5" />Validity & Duration</CardTitle></CardHeader>
+                <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                     <div className="space-y-2">
+                        <Label>Stay Duration (Days)</Label>
+                        <div className="flex gap-2">
+                             <Select value={formData.stayDurationType} onValueChange={v => updateFormData('stayDurationType', v)}>
+                                <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="fix">Fixed</SelectItem>
+                                    <SelectItem value="range">Range</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            {formData.stayDurationType === 'fix' ? (
+                                <Input type="number" placeholder="Days" value={formData.stayDurationFix} onChange={e => updateFormData('stayDurationFix', e.target.value)} />
                             ) : (
-                                <div className="flex items-center gap-2">
-                                    <Input 
-                                        type="number" 
-                                        placeholder="Min" 
-                                        value={formData.validityMin}
-                                        onChange={(e) => updateFormData('validityMin', e.target.value)}
-                                    />
-                                    <span>-</span>
-                                    <Input 
-                                        type="number" 
-                                        placeholder="Max" 
-                                        value={formData.validityMax}
-                                        onChange={(e) => updateFormData('validityMax', e.target.value)}
-                                    />
-                                    <span className="text-sm text-muted-foreground">Days</span>
+                                <div className="flex gap-2 w-full">
+                                    <Input type="number" placeholder="Min" value={formData.stayDurationMin} onChange={e => updateFormData('stayDurationMin', e.target.value)} />
+                                    <Input type="number" placeholder="Max" value={formData.stayDurationMax} onChange={e => updateFormData('stayDurationMax', e.target.value)} />
                                 </div>
                             )}
-                         </div>
-
-                         {/* Stay Duration */}
-                         <div className="space-y-2">
-                             <Label htmlFor="stayDuration" className="text-sm">Stay Duration (Lama Masa Stay)</Label>
-                             <div className="flex items-center gap-2">
-                                <Input
-                                    id="stayDuration"
-                                    type="number"
-                                    placeholder="e.g. 30"
-                                    value={formData.stayDuration}
-                                    onChange={(e) => updateFormData("stayDuration", e.target.value)}
-                                />
-                                <span className="text-sm text-muted-foreground">Days</span>
-                             </div>
-                             <p className="text-[10px] text-muted-foreground">
-                                Recommended based on Validity Period.
-                             </p>
-                         </div>
-                         
-                         {/* Earliest Apply Time */}
-                         <div className="space-y-2">
-                             <Label htmlFor="earliestApplyTime" className="text-sm">Earliest Apply Time (Waktu Tercepat Apply)</Label>
-                             <div className="flex items-center gap-2">
-                                <Input
-                                    id="earliestApplyTime"
-                                    type="number" // Assuming integer (days before)
-                                    placeholder="e.g. 90"
-                                    value={formData.earliestApplyTime}
-                                    onChange={(e) => updateFormData("earliestApplyTime", e.target.value)}
-                                />
-                                <span className="text-sm text-muted-foreground">Days Before</span>
-                             </div>
-                         </div>
-                    </div>
-                </div>
-          </CardContent>
-      </Card>
-
-      {/* 2. Operational & Location */}
-      <Card>
-          <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                  <HugeiconsIcon icon={Settings01Icon} className="size-5 text-primary" strokeWidth={2} />
-                  Operational Details
-              </CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <Label htmlFor="applicationMethod">Application Method</Label>
-                  <Select
-                    value={formData.applicationMethod}
-                    onValueChange={(val) => updateFormData("applicationMethod", val)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select method" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Online">Online</SelectItem>
-                      <SelectItem value="Offline">Offline</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                {/* Location Logic - Only if Offline */}
-                 <div className="space-y-2">
-                  <Label className={formData.applicationMethod !== 'Offline' ? "text-muted-foreground" : ""}>
-                    Location Apply (Lokasi)
-                  </Label>
-                  <div className={`space-y-2 border p-3 rounded-md transition-opacity ${formData.applicationMethod !== 'Offline' ? 'opacity-50 pointer-events-none' : ''}`}>
-                       <div className="flex flex-col gap-2">
-
-                            
-                            <div className="p-3 border rounded-md bg-white">
-                                <label className="flex items-center gap-2 cursor-pointer mb-2">
-                                    <input 
-                                        type="radio" 
-                                        name="locationType"
-                                        checked={formData.locationType === 'appointed'}
-                                        onChange={() => updateFormData('locationType', 'appointed')}
-                                        disabled={formData.applicationMethod !== 'Offline'}
-                                        className="accent-primary"
-                                    />
-                                    <span className="font-medium text-sm">Appointed City</span>
-                                </label>
-                                {formData.locationType === 'appointed' && (
-                                    <div className="pl-6 space-y-2 animate-in fade-in slide-in-from-top-1">
-                                        <div className="space-y-2">
-                                            <Label className="text-xs text-muted-foreground">Main City (Optional Display)</Label>
-                                            <SearchableSelect
-                                                options={cityOptions}
-                                                value={formData.appointedCity}
-                                                onValueChange={(val) => updateFormData('appointedCity', val)}
-                                                placeholder="Select primary city"
-                                                searchPlaceholder="Search city..."
-                                                emptyMessage="No city found."
-                                                triggerClassName="h-8 text-sm"
-                                            />
-                                        </div>
-                                         <div className="space-y-2">
-                                             <Label className="text-xs text-muted-foreground">List of Appointed Cities</Label>
-                                             <SearchableSelect
-                                                options={appointedCityOptions}
-                                                value=""
-                                                onValueChange={(val) => addCity('appointedCitiesList', val)}
-                                                placeholder="Select city to add..."
-                                                searchPlaceholder="Search city..."
-                                                emptyMessage="No city found."
-                                                triggerClassName="h-8 text-sm"
-                                                resetAfterSelect
-                                             />
-                                             <div className="flex flex-wrap gap-2 mt-2">
-                                                {formData.appointedCitiesList.map((city, idx) => (
-                                                    <Badge key={idx} variant="secondary" className="flex items-center gap-1 pr-1">
-                                                        {city}
-                                                        <span 
-                                                            className="cursor-pointer hover:text-destructive ml-1"
-                                                            onClick={() => removeCity('appointedCitiesList', idx)}
-                                                        >×</span>
-                                                    </Badge>
-                                                ))}
-                                             </div>
-                                         </div>
-                                    </div>
-                                )}
-                            </div>
-                            
-                            <div className="p-3 border rounded-md bg-white">
-                                <label className="flex items-center gap-2 cursor-pointer mb-2">
-                                    <input 
-                                        type="radio" 
-                                        name="locationType"
-                                        checked={formData.locationType === 'available'}
-                                        onChange={() => updateFormData('locationType', 'available')}
-                                        disabled={formData.applicationMethod !== 'Offline'}
-                                        className="accent-primary"
-                                    />
-                                    <span className="font-medium text-sm">Based on Available City</span>
-                                </label>
-                                {formData.locationType === 'available' && (
-                                    <div className="pl-6 animate-in fade-in slide-in-from-top-1 space-y-2">
-                                         <div className="space-y-2">
-                                             <Label className="text-xs text-muted-foreground">List of Available Cities</Label>
-                                             <SearchableSelect
-                                                options={availableCityOptions}
-                                                value=""
-                                                onValueChange={(val) => addCity('availableCitiesList', val)}
-                                                placeholder="Select city to add..."
-                                                searchPlaceholder="Search city..."
-                                                emptyMessage="No city found."
-                                                triggerClassName="h-8 text-sm"
-                                                resetAfterSelect
-                                             />
-                                             <div className="flex flex-wrap gap-2 mt-2">
-                                                {formData.availableCitiesList.map((city, idx) => (
-                                                    <Badge key={idx} variant="secondary" className="flex items-center gap-1 pr-1">
-                                                        {city}
-                                                        <span 
-                                                            className="cursor-pointer hover:text-destructive ml-1"
-                                                            onClick={() => removeCity('availableCitiesList', idx)}
-                                                        >×</span>
-                                                    </Badge>
-                                                ))}
-                                             </div>
-                                         </div>
-                                    </div>
-                                )}
-                            </div>
-                       </div>
-                  </div>
-                </div>
-
-                {/* Flags */}
-                <div className="space-y-4 md:col-span-2">
-                     <div className="flex items-center space-x-2 border p-3 rounded-md bg-muted/20">
-                        <Checkbox 
-                            id="isNeedAppointment" 
-                            checked={formData.isNeedAppointment}
-                            onCheckedChange={(checked) => updateFormData("isNeedAppointment", !!checked)}
-                        />
-                        <Label htmlFor="isNeedAppointment" className="cursor-pointer">Is Need Appointment?</Label>
-                    </div>
-                     <div className="flex items-center space-x-2 border p-3 rounded-md bg-muted/20">
-                        <Checkbox 
-                            id="isApplicantPresenceRequired" 
-                            checked={formData.isApplicantPresenceRequired}
-                            onCheckedChange={(checked) => updateFormData("isApplicantPresenceRequired", !!checked)}
-                        />
-                        <Label htmlFor="isApplicantPresenceRequired" className="cursor-pointer">Is Applicant Presence Required? (Perlu Kehadiran)</Label>
-                    </div>
-                     <div className="flex items-center space-x-2 border p-3 rounded-md bg-muted/20">
-                        <Checkbox 
-                            id="physicalPassport" 
-                            checked={formData.needPhysicalPassport}
-                            onCheckedChange={(checked) => updateFormData("needPhysicalPassport", !!checked)}
-                        />
-                        <Label htmlFor="physicalPassport" className="cursor-pointer">Physical Passport Required</Label>
-                    </div>
-                </div>
-          </CardContent>
-      </Card>
-      
-      {/* 3. Requirements (Syarat) & Documents */}
-       <Card>
-          <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                  <HugeiconsIcon icon={DocumentValidationIcon} className="size-5 text-primary" strokeWidth={2} />
-                  Requirements (Syarat & Dokumen)
-              </CardTitle>
-              <CardDescription>
-                  Define eligibility criteria (Status) and required documents.
-              </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-8">
-              {/* Status Requirements */}
-              <div className="space-y-4">
-                  <h3 className="font-semibold text-lg border-b pb-2">Status Requirements</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                            <Label>Job Requirement (Pekerjaan)</Label>
-                            <Textarea 
-                                placeholder="Describe job requirements..."
-                                value={formData.jobRequirement}
-                                onChange={(e) => updateFormData('jobRequirement', e.target.value)}
-                            />
                         </div>
-                         <div className="space-y-2">
-                            <Label>Marriage Requirement (Pernikahan)</Label>
-                            <Textarea 
-                                placeholder="Describe marriage status requirements..."
-                                value={formData.marriageRequirement}
-                                onChange={(e) => updateFormData('marriageRequirement', e.target.value)}
-                            />
-                        </div>
-                         <div className="space-y-2">
-                            <Label>Relationship (Hubungan)</Label>
-                            <Textarea 
-                                placeholder="Describe relationship requirements..."
-                                value={formData.relationshipRequirement}
-                                onChange={(e) => updateFormData('relationshipRequirement', e.target.value)}
-                            />
-                        </div>
-                        <div className="space-y-2">
-                             <Label>Age (Umur)</Label>
-                             <div className="flex items-center gap-2">
-                                <Input 
-                                    type="number" 
-                                    placeholder="Min Age" 
-                                    value={formData.minAge}
-                                    onChange={(e) => updateFormData('minAge', e.target.value)}
-                                />
-                                <span>-</span>
-                                <Input 
-                                    type="number" 
-                                    placeholder="Max Age" 
-                                    value={formData.maxAge}
-                                    onChange={(e) => updateFormData('maxAge', e.target.value)}
-                                />
-                             </div>
-                        </div>
-                         <div className="space-y-2 md:col-span-2">
-                            <Label>Application History (History Apply)</Label>
-                            <Textarea 
-                                placeholder="Any history requirements..."
-                                value={formData.historyRequirement}
-                                onChange={(e) => updateFormData('historyRequirement', e.target.value)}
-                            />
-                        </div>
-                  </div>
-              </div>
-              
-              {/* Sponsor */}
-              <div className="space-y-4">
-                  <h3 className="font-semibold text-lg border-b pb-2">Alllowed Sponsors</h3>
-                  <div className="flex flex-wrap gap-4">
-                      {SPONSOR_TYPES.map(sponsor => (
-                          <div key={sponsor} className="flex flex-col">
-                              <div className="flex items-center space-x-2">
-                                  <Checkbox 
-                                    id={`sponsor-${sponsor}`}
-                                    checked={formData.allowedSponsors.includes(sponsor)}
-                                    onCheckedChange={() => toggleSponsor(sponsor)}
-                                  />
-                                  <Label htmlFor={`sponsor-${sponsor}`} className="cursor-pointer">{sponsor}</Label>
-                              </div>
-                          </div>
-                      ))}
-                  </div>
-                  {formData.allowedSponsors.includes("Lain-lain") && (
-                        <div className="mt-3 animate-in fade-in slide-in-from-top-2">
-                            <Label htmlFor="sponsorOtherDetails" className="text-sm mb-1.5 block">
-                                Specification for 'Lain-lain' (Catatan)
-                            </Label>
-                            <Textarea 
-                                id="sponsorOtherDetails"
-                                placeholder="Please specify other sponsor details..."
-                                value={formData.sponsorOtherDetails}
-                                onChange={(e) => updateFormData("sponsorOtherDetails", e.target.value)}
-                                className="min-h-[80px]"
-                            />
-                        </div>
-                  )}
-              </div>
-              
-              {/* Documents */}
-              <div className="space-y-4">
-                   <h3 className="font-semibold text-lg border-b pb-2">Document Requirements</h3>
-                   <div className="grid grid-cols-1 gap-4">
-                        {documents.map((doc) => (
-                            <div
-                            key={doc.id}
-                            className={`flex flex-col space-y-2 p-3 rounded-md border transition-all ${
-                                doc.isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-muted hover:border-gray-300"
-                            }`}
-                            >
-                                <div className="flex items-start justify-between">
-                                    <div className="flex items-center space-x-3">
-                                        <Checkbox
-                                            id={doc.id}
-                                            checked={doc.isSelected}
-                                            onCheckedChange={() => toggleDocument(doc.id)}
-                                        />
-                                        <div className="space-y-1">
-                                            <Label htmlFor={doc.id} className="cursor-pointer font-medium leading-none flex items-center gap-2">
-                                                {doc.name}
-                                            </Label>
-                                            <div className="flex flex-wrap gap-1">
-                                                {doc.formats.map(fmt => (
-                                                    <Badge key={fmt} variant="secondary" className="text-[10px] px-1 py-0 h-4">{fmt}</Badge>
-                                                ))}
-                                                {doc.allow_multiple && <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">Multiple</Badge>}
-                                                {doc.sub_documents.length > 0 && <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">{doc.sub_documents.length} Sub-docs</Badge>}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    {doc.isSelected && (
-                                        <div className="animate-in fade-in slide-in-from-right-2 duration-200">
-                                            <label className="text-xs flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground transition-colors">
-                                                <Checkbox 
-                                                    checked={doc.isMandatory}
-                                                    onCheckedChange={() => toggleDocumentMandatory(doc.id)}
-                                                    className="h-3.5 w-3.5"
-                                                />
-                                                Mandatory
-                                            </label>
-                                        </div>
-                                    )}
+                     </div>
+                     <div className="space-y-2">
+                        <Label>Validity Period (Start to Expiry)</Label>
+                        <div className="flex gap-2">
+                            <Select value={formData.validityType} onValueChange={v => updateFormData('validityType', v)}>
+                                <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="fix">Fixed</SelectItem>
+                                    <SelectItem value="range">Range</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            {formData.validityType === 'fix' ? (
+                                <Input type="number" placeholder="Days" value={formData.validityFix} onChange={e => updateFormData('validityFix', e.target.value)} />
+                            ) : (
+                                <div className="flex gap-2 w-full">
+                                    <Input type="number" placeholder="Min" value={formData.validityMin} onChange={e => updateFormData('validityMin', e.target.value)} />
+                                    <Input type="number" placeholder="Max" value={formData.validityMax} onChange={e => updateFormData('validityMax', e.target.value)} />
                                 </div>
-                                
+                            )}
+                        </div>
+                     </div>
+                </CardContent>
+             </Card>
 
-                                    {doc.isSelected && (
-                                        <div className="mt-3 pl-7 border-l-2 border-primary/20 ml-2 space-y-3">
-                                            {/* Notes Input */}
-                                            <div className="space-y-1.5">
-                                                <Label htmlFor={`note-${doc.id}`} className="text-xs text-muted-foreground">
-                                                    Notes / Instructions for this document:
-                                                </Label>
-                                                <Input 
-                                                    id={`note-${doc.id}`}
-                                                    placeholder="e.g. Must be translated to English"
-                                                    value={doc.notes}
-                                                    onChange={(e) => updateDocumentNote(doc.id, e.target.value)}
-                                                    className="h-8 text-sm"
-                                                />
-                                            </div>
+             <Card>
+                 <CardHeader><CardTitle className="flex items-center gap-2"><HugeiconsIcon icon={Clock01Icon} className="size-5" />Processing Times</CardTitle></CardHeader>
+                 <CardContent className="space-y-6">
+                    {/* Wepose Internal */}
+                    <div className="space-y-2">
+                        <Label>Internal Processing (Wepose)</Label>
+                        <div className="flex gap-2 items-center">
+                             <Select value={formData.processingTimeType} onValueChange={v => updateFormData('processingTimeType', v)}>
+                                <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
+                                <SelectContent><SelectItem value="fix">Fixed</SelectItem><SelectItem value="range">Range</SelectItem></SelectContent>
+                            </Select>
+                            {formData.processingTimeType === 'fix' ? (
+                                <Input type="number" className="max-w-[150px]" placeholder="Days" value={formData.processingTimeFix} onChange={e => updateFormData('processingTimeFix', e.target.value)} />
+                            ) : (
+                                <div className="flex gap-2 max-w-[300px]">
+                                    <Input type="number" placeholder="Min" value={formData.processingTimeMin} onChange={e => updateFormData('processingTimeMin', e.target.value)} />
+                                    <Input type="number" placeholder="Max" value={formData.processingTimeMax} onChange={e => updateFormData('processingTimeMax', e.target.value)} />
+                                </div>
+                            )}
+                            <span className="text-sm text-muted-foreground">Days</span>
+                        </div>
+                    </div>
+
+                    {/* Visa Center */}
+                    <div className="space-y-2">
+                        <Label>Visa Center / Embassy Processing</Label>
+                        <div className="flex gap-2 items-center">
+                             <Select value={formData.processCenterType} onValueChange={v => updateFormData('processCenterType', v)}>
+                                <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
+                                <SelectContent><SelectItem value="fix">Fixed</SelectItem><SelectItem value="range">Range</SelectItem></SelectContent>
+                            </Select>
+                            {formData.processCenterType === 'fix' ? (
+                                <Input type="number" className="max-w-[150px]" placeholder="Days" value={formData.processCenterFix} onChange={e => updateFormData('processCenterFix', e.target.value)} />
+                            ) : (
+                                <div className="flex gap-2 max-w-[300px]">
+                                    <Input type="number" placeholder="Min" value={formData.processCenterMin} onChange={e => updateFormData('processCenterMin', e.target.value)} />
+                                    <Input type="number" placeholder="Max" value={formData.processCenterMax} onChange={e => updateFormData('processCenterMax', e.target.value)} />
+                                </div>
+                            )}
+                            <span className="text-sm text-muted-foreground">Days</span>
+                        </div>
+                    </div>
+                 </CardContent>
+             </Card>
+
+             <Card className="overflow-visible">
+                 <CardHeader><CardTitle>Application Operation</CardTitle></CardHeader>
+                 <CardContent className="space-y-4">
+                     <div className="flex items-center justify-between border p-3 rounded-md">
+                         <div className="space-y-0.5">
+                             <Label>Online Submission</Label>
+                             <p className="text-xs text-muted-foreground">Is this visa applied fully online?</p>
+                         </div>
+                         <Switch 
+                            checked={formData.applicationMethod === 'Online'} 
+                            onCheckedChange={c => updateFormData('applicationMethod', c ? 'Online' : 'Offline')} 
+                         />
+                     </div>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="flex items-center space-x-2">
+                            <Checkbox id="appt" checked={formData.isNeedAppointment} onCheckedChange={(c: boolean) => updateFormData('isNeedAppointment', c)} />
+                            <Label htmlFor="appt">Appointment Required</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Checkbox id="bio" checked={formData.isApplicantPresenceRequired} onCheckedChange={(c: boolean) => updateFormData('isApplicantPresenceRequired', c)} />
+                            <Label htmlFor="bio">Applicant Presence Required (Biometrics/Interview)</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Checkbox id="phys" checked={formData.needPhysicalPassport} onCheckedChange={(c: boolean) => updateFormData('needPhysicalPassport', c)} />
+                            <Label htmlFor="phys">Physical Passport Required</Label>
+                        </div>
+                     </div>
+
+                     {formData.applicationMethod === 'Offline' && (
+                        <div className="space-y-4 pt-4 border-t animate-in fade-in slide-in-from-top-2">
+                             <div className="space-y-2">
+                                <Label>Location Type</Label>
+                                <Select value={formData.locationType} onValueChange={(v: any) => updateFormData('locationType', v)}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="appointed">Appointed (Specific City per Applicant)</SelectItem>
+                                        <SelectItem value="available">Available (Applicant Chooses from List)</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                             </div>
+
+                             {formData.locationType === 'appointed' ? (
+                                <div className="space-y-2">
+                                    <Label>Appointed Cities (One can be defaulted, usually Jakarta)</Label>
+                                     <SearchableSelect 
+                                         options={cityOptions}
+                                         value={formData.appointedCity}
+                                         onValueChange={v => updateFormData('appointedCity', v)}
+                                         placeholder="Select Default Appointed City"
+                                     />
+                                     <div className="text-xs text-muted-foreground">
+                                         Or manage list for specific jurisdictions if needed.
+                                     </div>
+                                </div>
+                             ) : (
+                                <div className="space-y-2">
+                                    <Label>Available Cities (Where applicant can apply)</Label>
+                                    <div className="flex flex-wrap gap-2 mb-2">
+                                        {formData.availableCitiesList.map(city => (
+                                            <Badge key={city} variant="secondary" className="flex items-center gap-1">
+                                                {city}
+                                                <HugeiconsIcon icon={Delete02Icon} className="size-3 cursor-pointer" onClick={() => {
+                                                    updateFormData('availableCitiesList', formData.availableCitiesList.filter(c => c !== city))
+                                                }} />
+                                            </Badge>
+                                        ))}
+                                    </div>
+                                    <SearchableSelect 
+                                         options={cityOptions}
+                                         value=""
+                                         onValueChange={v => {
+                                             if(v && !formData.availableCitiesList.includes(v)) {
+                                                 updateFormData('availableCitiesList', [...formData.availableCitiesList, v]);
+                                             }
+                                         }}
+                                         placeholder="Add City..."
+                                     />
+                                </div>
+                             )}
+                        </div>
+                     )}
+                 </CardContent>
+             </Card>
+        </TabsContent>
+
+        {/* 3. REQUIREMENTS */}
+        <TabsContent value="requirements" className="space-y-4 py-4 animate-in fade-in slide-in-from-left-4 duration-300">
+            <Card>
+                <CardHeader><CardTitle className="flex items-center gap-2"><HugeiconsIcon icon={DocumentValidationIcon} className="size-5" />Eligibility & Requirements</CardTitle></CardHeader>
+                <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                        <Label>Age Restriction</Label>
+                        <div className="flex gap-2">
+                            <Input type="number" placeholder="Min Age" value={formData.minAge} onChange={e => updateFormData('minAge', e.target.value)} />
+                            <Input type="number" placeholder="Max Age" value={formData.maxAge} onChange={e => updateFormData('maxAge', e.target.value)} />
+                        </div>
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Minimum Bank Balance</Label>
+                        <Input type="number" placeholder="e.g. 50000000" value={formData.reqMinBalance} onChange={e => updateFormData('reqMinBalance', e.target.value)} />
+                    </div>
+                    
+                    <div className="col-span-1 md:col-span-2 space-y-2">
+                        <Label>Detailed Requirements</Label>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <Textarea placeholder="Travel History Requirements (e.g. Must have visited OECD countries)" value={formData.reqTravelHistory} onChange={e => updateFormData('reqTravelHistory', e.target.value)} className="min-h-[100px]" />
+                            <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">Allowed Job Status</Label>
+                                <div className="grid grid-cols-2 gap-2 border p-2 rounded-md h-[150px] overflow-y-auto w-full">
+                                    {(jobStatusOptions.length > 0 ? jobStatusOptions : FALLBACK_JOB_STATUS_OPTIONS).map(status => (
+                                        <div key={status} className="flex items-center space-x-2">
+                                            <Checkbox 
+                                                id={`job-${status}`} 
+                                                checked={formData.reqJobStatus.includes(status)}
+                                                onCheckedChange={(checked) => {
+                                                    if (checked) setFormData(p => ({ ...p, reqJobStatus: [...p.reqJobStatus, status] }));
+                                                    else setFormData(p => ({ ...p, reqJobStatus: p.reqJobStatus.filter(s => s !== status) }));
+                                                }}
+                                            />
+                                            <Label htmlFor={`job-${status}`} className="font-normal text-[11px] leading-tight break-words">{status}</Label>
                                         </div>
-                                    )}
+                                    ))}
+                                </div>
+                                <div className="mt-2 w-full">
+                                    <SearchableSelect 
+                                        options={[{value: '', label: ''}]} // Dummy options since we only use it to add right now
+                                        value=""
+                                        onValueChange={() => {}} 
+                                        onCreate={handleCreateJobStatus}
+                                        placeholder="Add New Job Status..."
+                                        searchPlaceholder="Type new job status..."
+                                        emptyMessage="Type to create status"
+                                        className="h-8"
+                                    />
+                                </div>
                             </div>
-                        ))}
-                   </div>
-              </div>
-          </CardContent>
-      </Card>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
+        </TabsContent>
+
+        {/* 5. DOCUMENTS */}
+        <TabsContent value="documents" className="space-y-4 py-4 animate-in fade-in slide-in-from-left-4 duration-300">
+             <Card>
+                 <CardHeader><CardTitle>Required Documents</CardTitle><CardDescription>Select documents and configure specific rules.</CardDescription></CardHeader>
+                 <CardContent>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                         {documents.map(doc => (
+                             <div key={doc.id} className={`border p-3 rounded-md flex items-start gap-3 transition-colors ${doc.isSelected ? 'border-primary bg-primary/5' : 'opacity-70'}`}>
+                                 <Checkbox 
+                                    id={`doc-${doc.id}`} 
+                                    checked={doc.isSelected} 
+                                    onCheckedChange={() => toggleDocument(doc.id)} 
+                                    className="mt-1"
+                                 />
+                                 <div className="flex-1 space-y-1">
+                                     <div className="flex items-center justify-between">
+                                          <Label htmlFor={`doc-${doc.id}`} className="font-medium cursor-pointer">{doc.name}</Label>
+                                          {doc.isSelected && (
+                                              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setConfiguringDocId(doc.id)}>
+                                                  <HugeiconsIcon icon={Settings01Icon} className="size-4 text-muted-foreground" />
+                                              </Button>
+                                          )}
+                                     </div>
+                                     <p className="text-xs text-muted-foreground line-clamp-1">{doc.description}</p>
+                                     {doc.isSelected && (
+                                         <div className="flex gap-2 mt-2">
+                                             <div className="flex items-center space-x-1">
+                                                <Checkbox id={`mand-${doc.id}`} checked={doc.isMandatory} onCheckedChange={(c: boolean) => {
+                                                    setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, isMandatory: c } : d));
+                                                }} />
+                                                <Label htmlFor={`mand-${doc.id}`} className="text-xs font-normal">Mandatory</Label>  
+                                             </div>
+                                         </div>
+                                     )}
+                                 </div>
+                             </div>
+                         ))}
+                     </div>
+                 </CardContent>
+             </Card>
+
+             {/* Document Config Dialog */}
+             <Dialog open={!!configuringDocId} onOpenChange={(o) => !o && setConfiguringDocId(null)}>
+                 <DialogContent>
+                     <DialogHeader>
+                         <DialogTitle>Configure Document Rules</DialogTitle>
+                         <DialogDescription>Specific requirements for {documents.find(d => d.id === configuringDocId)?.name}</DialogDescription>
+                     </DialogHeader>
+                     {configuringDocId && (
+                         <div className="space-y-4 py-2">
+                             {/* Specific configs for this document */}
+                             <div className="space-y-2">
+                                 <Label>Specific Notes / Description for Applicant</Label>
+                                 <Textarea 
+                                    value={documents.find(d => d.id === configuringDocId)?.notes || ""} 
+                                    onChange={e => setDocuments(prev => prev.map(d => d.id === configuringDocId ? { ...d, notes: e.target.value } : d))}
+                                    placeholder="e.g. Must be color scan, minimum 300dpi..."
+                                 />
+                             </div>
+                             
+                             {/* Mock Config Fields */}
+                             <div className="grid grid-cols-2 gap-4">
+                                 <div className="space-y-2">
+                                     <Label>Photo Size / Spec</Label>
+                                     <Input 
+                                        value={documents.find(d => d.id === configuringDocId)?.config?.photo_size || ""}
+                                        onChange={e => updateDocumentConfig(configuringDocId, 'photo_size', e.target.value)}
+                                        placeholder="e.g. 3.5x4.5cm white bg"
+                                     />
+                                 </div>
+                                 <div className="flex items-center space-x-2 pt-8">
+                                     <Checkbox 
+                                        checked={documents.find(d => d.id === configuringDocId)?.config?.original_required || false}
+                                        onCheckedChange={c => updateDocumentConfig(configuringDocId, 'original_required', c)}
+                                     />
+                                     <Label>Original Document Required</Label>
+                                 </div>
+                             </div>
+                         </div>
+                     )}
+                     <DialogFooter>
+                         <Button onClick={() => setConfiguringDocId(null)}>Done</Button>
+                     </DialogFooter>
+                 </DialogContent>
+             </Dialog>
+        </TabsContent>
+
+        {/* 6. QUESTIONS */}
+        <TabsContent value="questions" className="space-y-4 py-4 animate-in fade-in slide-in-from-left-4 duration-300">
+             <Card>
+                 <CardHeader className="flex flex-row items-center justify-between">
+                     <CardTitle className="flex items-center gap-2"><HugeiconsIcon icon={QuestionIcon} className="size-5" />Applicant Questions</CardTitle>
+                     <Button size="sm" onClick={addQuestion}><HugeiconsIcon icon={PlusSignIcon} className="size-4 mr-1" /> Add Question</Button>
+                 </CardHeader>
+                 <CardContent className="space-y-4">
+                     {formData.questions.length === 0 && <div className="text-center py-8 text-muted-foreground border border-dashed rounded-md">No extra questions defined.</div>}
+                     {formData.questions.map((q, idx) => (
+                         <div key={q.id} className="border p-4 rounded-md space-y-3 relative bg-muted/30">
+                             <div className="absolute top-2 right-2">
+                                 <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={() => removeQuestion(q.id)}>
+                                     <HugeiconsIcon icon={Delete02Icon} className="size-4" />
+                                 </Button>
+                             </div>
+                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-start pr-8">
+                                 <div className="md:col-span-2 space-y-1">
+                                     <Label>Question Text</Label>
+                                     <Input value={q.text} onChange={e => updateQuestion(q.id, 'text', e.target.value)} placeholder="e.g. Have you ever been denied a visa?" />
+                                 </div>
+                                 <div className="space-y-1">
+                                     <Label>Answer Type</Label>
+                                     <Select value={q.type} onValueChange={v => updateQuestion(q.id, 'type', v)}>
+                                         <SelectTrigger><SelectValue /></SelectTrigger>
+                                         <SelectContent>
+                                             <SelectItem value="text">Text Input</SelectItem>
+                                             <SelectItem value="boolean">Yes/No</SelectItem>
+                                             <SelectItem value="date">Date</SelectItem>
+                                             <SelectItem value="select">Dropdown</SelectItem>
+                                         </SelectContent>
+                                     </Select>
+                                 </div>
+                                 <div className="flex items-center pt-8 space-x-2">
+                                     <Checkbox checked={q.required} onCheckedChange={c => updateQuestion(q.id, 'required', c)} />
+                                     <Label>Required</Label>
+                                 </div>
+                             </div>
+                         </div>
+                     ))}
+                 </CardContent>
+             </Card>
+        </TabsContent>
+
+      </Tabs>
       
-      {/* Submit Action */}
-      <div className="fixed bottom-0 left-0 right-0 p-4 bg-background border-t z-10 flex justify-end gap-3 shadow-[0_-5px_10px_rgba(0,0,0,0.05)] md:pl-[250px]">
-           <Button variant="outline" onClick={() => router.back()} disabled={isSubmitting}>
-               Cancel
-           </Button>
-           <Button onClick={handleSubmit} disabled={isSubmitting} className="min-w-[120px]">
-               {isSubmitting ? (
-                   <>
-                       <HugeiconsIcon icon={Loading03Icon} className="animate-spin mr-2 size-4" />
-                       Saving...
-                   </>
-               ) : (
-                   <>
-                       <HugeiconsIcon icon={CheckmarkCircle01Icon} className="mr-2 size-4" strokeWidth={2} />
-                       {visaId ? "Update Visa" : "Create Visa"}
-                   </>
-               )}
+      {/* Footer Save Button for convenience */}
+      <div className="flex justify-end gap-4 border-t pt-6">
+           <Button variant="outline" size="lg" onClick={() => router.back()}>Cancel</Button>
+           <Button size="lg" onClick={handleSubmit} disabled={isSubmitting} className="min-w-[150px]">
+               {isSubmitting ? "Saving..." : "Save Visa Configuration"}
            </Button>
       </div>
     </div>
