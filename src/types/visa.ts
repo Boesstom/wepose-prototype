@@ -1,6 +1,12 @@
 export type VisaType = 'Single' | 'Multiple' | 'Double' | 'Custom';
 export type ApplicationMethod = 'Online' | 'Offline';
 
+export interface DocumentCondition {
+  field: 'jobStatus' | 'maritalStatus' | 'age' | 'travelHistory' | 'otherVisa' | 'sponsorRelation' | string;
+  operator: 'in' | 'not_in' | 'equals' | 'greater_than' | 'less_than' | 'contains';
+  value: any;
+}
+
 export interface VisaDocumentConfig {
   photo_size?: string;
   passport_min_validity_months?: number;
@@ -8,6 +14,11 @@ export interface VisaDocumentConfig {
   color_copy_required?: boolean;
   digital_copy_required?: boolean;
   remarks?: string;
+
+  // Conditional Requirements
+  isConditional?: boolean;
+  conditionType?: 'AND' | 'OR';
+  conditions?: DocumentCondition[];
 }
 
 export interface VisaDocument {
@@ -30,11 +41,17 @@ export interface PricingRule {
   description?: string;
 }
 
-export interface PricingBreakdown {
+export type PricingCategory = 'Global' | 'Adult' | 'Child' | 'Infant' | 'Add Family';
+
+export interface PricingTier {
+  id: string; // generated UUID for React mapping
+  category: PricingCategory;
   embassy_price: number;
   center_price: number;
   service_fee: number;
   other_fees: { name: string; amount: number }[];
+  fit_price?: number; // Total FIT (Retail) selling price
+  agent_price?: number; // Total Agent selling price
 }
 
 export interface Question {
@@ -49,7 +66,7 @@ export interface Visa {
   id: string;
   name: string;
   country: string;
-  
+
   // Basic Info
   purpose?: string; // New: e.g. "Tourist", "Business"
   category?: 'First Time' | 'Extension';
@@ -59,7 +76,7 @@ export interface Visa {
   stayDuration: string; // e.g., "30 Days"
   validity: string; // "90 Days"
   processingTime: string; // "3-5 Working Days"
-  
+
   // Detailed Processing Config
   processing_time_type?: 'fix' | 'range';
   processing_time_fix?: number;
@@ -80,7 +97,7 @@ export interface Visa {
   validity_fix?: number;
   validity_min?: number;
   validity_max?: number;
-  
+
   stay_duration_type?: 'fix' | 'range';
   stay_duration_fix?: number;
   stay_duration_min?: number;
@@ -93,7 +110,8 @@ export interface Visa {
   price: number; // Final Total Price (FIT)
   priceAgent?: number;
   pricingRules?: PricingRule[];
-  pricing_breakdown?: PricingBreakdown; 
+  pricing_tiers?: PricingTier[];
+  pricing_breakdown?: PricingTier[];
 
   // Location & Method
   applicationMethod: ApplicationMethod;
