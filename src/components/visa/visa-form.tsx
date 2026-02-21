@@ -49,7 +49,7 @@ import { getCountries, getCities, type Address } from "@/lib/supabase/addresses"
 import { getDocuments, type Document } from "@/lib/supabase/documents";
 import { createVisa, updateVisa, getVisaById } from "@/lib/supabase/visas";
 import { getPurposes, addPurpose, type Purpose } from "@/lib/supabase/purposes";
-import type { Question, VisaDocumentConfig, DocumentCondition, PricingTier } from "@/types/visa";
+import type { Question, VisaDocumentConfig, DocumentCondition } from "@/types/visa";
 // ─── TYPES & CONSTANTS ───────────────────────────────────────────────
 
 type FormDocument = Document & {
@@ -130,9 +130,6 @@ interface FormData {
 
     // 6. Questions (JSON list)
     questions: Question[];
-
-    // 7. Pricing
-    pricingTiers: PricingTier[];
 }
 
 interface VisaFormProps {
@@ -204,8 +201,7 @@ export function VisaForm({ visaId }: VisaFormProps) {
         appointedCitiesList: [],
         availableCitiesList: [],
 
-        questions: [],
-        pricingTiers: []
+        questions: []
     });
 
     // Current configuring document (Dialog)
@@ -241,7 +237,6 @@ export function VisaForm({ visaId }: VisaFormProps) {
                     const visa = await getVisaById(visaId);
                     if (visa) {
                         // Map to FormData
-                        const tiers = (visa.pricing_breakdown as any) || [];
                         const reqs = (visa.requirements_data as any) || {};
 
                         setFormData(prev => ({
@@ -293,8 +288,7 @@ export function VisaForm({ visaId }: VisaFormProps) {
                             appointedCitiesList: (visa.appointed_cities_list as any) || [],
                             availableCitiesList: (visa.available_cities_list as any) || [],
 
-                            questions: (visa.questions_data as any) || [],
-                            pricingTiers: tiers
+                            questions: (visa.questions_data as any) || []
                         }));
 
                         // Map Documents
@@ -465,64 +459,6 @@ export function VisaForm({ visaId }: VisaFormProps) {
         }));
     };
 
-    // Pricing
-    const addPricingTier = () => {
-        setFormData(prev => ({
-            ...prev,
-            pricingTiers: [
-                ...prev.pricingTiers,
-                { id: crypto.randomUUID(), category: 'Adult', embassy_price: 0, center_price: 0, service_fee: 0, other_fees: [] }
-            ]
-        }));
-    };
-
-    const removePricingTier = (id: string) => {
-        setFormData(prev => ({ ...prev, pricingTiers: prev.pricingTiers.filter(p => p.id !== id) }));
-    };
-
-    const updatePricingTier = (id: string, field: keyof PricingTier, value: any) => {
-        setFormData(prev => ({
-            ...prev,
-            pricingTiers: prev.pricingTiers.map(p => p.id === id ? { ...p, [field]: value } : p)
-        }));
-    };
-
-    const addOtherFee = (tierId: string) => {
-        setFormData(prev => ({
-            ...prev,
-            pricingTiers: prev.pricingTiers.map(p => {
-                if (p.id === tierId) return { ...p, other_fees: [...p.other_fees, { name: '', amount: 0 }] };
-                return p;
-            })
-        }));
-    };
-
-    const updateOtherFee = (tierId: string, feeIdx: number, field: 'name' | 'amount', value: any) => {
-        setFormData(prev => ({
-            ...prev,
-            pricingTiers: prev.pricingTiers.map(p => {
-                if (p.id === tierId) {
-                    const newFees = [...p.other_fees];
-                    newFees[feeIdx] = { ...newFees[feeIdx], [field]: value };
-                    return { ...p, other_fees: newFees };
-                }
-                return p;
-            })
-        }));
-    };
-
-    const removeOtherFee = (tierId: string, feeIdx: number) => {
-        setFormData(prev => ({
-            ...prev,
-            pricingTiers: prev.pricingTiers.map(p => {
-                if (p.id === tierId) {
-                    return { ...p, other_fees: p.other_fees.filter((_, i) => i !== feeIdx) };
-                }
-                return p;
-            })
-        }));
-    };
-
     // ─── SUBMISSION ────────────────────────────────────────────────────────
 
     const handleSubmit = async () => {
@@ -590,7 +526,6 @@ export function VisaForm({ visaId }: VisaFormProps) {
                 available_cities_list: formData.availableCitiesList,
 
                 questions_data: formData.questions as any,
-                pricing_tiers: formData.pricingTiers as any,
             };
 
             const selectedDocs = documents
@@ -652,7 +587,6 @@ export function VisaForm({ visaId }: VisaFormProps) {
                     <TabsTrigger value="requirements" className="py-2.5">Requirements</TabsTrigger>
                     <TabsTrigger value="documents" className="py-2.5">Documents</TabsTrigger>
                     <TabsTrigger value="questions" className="py-2.5">Questions</TabsTrigger>
-                    <TabsTrigger value="pricing" className="py-2.5">Pricing</TabsTrigger>
                 </TabsList>
 
                 {/* 1. IDENTITY & BASIC INFO */}
@@ -1133,71 +1067,6 @@ export function VisaForm({ visaId }: VisaFormProps) {
                                             <Checkbox checked={q.required} onCheckedChange={c => updateQuestion(q.id, 'required', c)} />
                                             <Label>Required</Label>
                                         </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </CardContent>
-                    </Card>
-                </TabsContent>
-
-                {/* 7. PRICING */}
-                <TabsContent value="pricing" className="space-y-4 py-4 animate-in fade-in slide-in-from-left-4 duration-300">
-                    <Card>
-                        <CardHeader className="flex flex-row items-center justify-between">
-                            <CardTitle>Pricing Breakdown</CardTitle>
-                            <Button size="sm" onClick={addPricingTier}><HugeiconsIcon icon={PlusSignIcon} className="size-4 mr-1" /> Add Pricing Tier</Button>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            {formData.pricingTiers.length === 0 && <div className="text-center py-8 text-muted-foreground border border-dashed rounded-md">No pricing tiers configured. The system will use default settings if omitted.</div>}
-                            {formData.pricingTiers.map(tier => (
-                                <div key={tier.id} className="border p-4 rounded-md space-y-4 relative bg-muted/30">
-                                    <div className="absolute top-2 right-2">
-                                        <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={() => removePricingTier(tier.id)}>
-                                            <HugeiconsIcon icon={Delete02Icon} className="size-4" />
-                                        </Button>
-                                    </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-start pr-8">
-                                        <div className="space-y-1">
-                                            <Label>Tier Category</Label>
-                                            <Select value={tier.category} onValueChange={(v: any) => updatePricingTier(tier.id, 'category', v)}>
-                                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="Global">Global (Default)</SelectItem>
-                                                    <SelectItem value="Adult">Adult</SelectItem>
-                                                    <SelectItem value="Child">Child</SelectItem>
-                                                    <SelectItem value="Infant">Infant</SelectItem>
-                                                    <SelectItem value="Add Family">Add Family</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label>Embassy Price</Label>
-                                            <Input type="number" value={tier.embassy_price} onChange={e => updatePricingTier(tier.id, 'embassy_price', parseFloat(e.target.value) || 0)} placeholder="0" />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label>Visa Center Fee</Label>
-                                            <Input type="number" value={tier.center_price} onChange={e => updatePricingTier(tier.id, 'center_price', parseFloat(e.target.value) || 0)} placeholder="0" />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <Label>Service Fee</Label>
-                                            <Input type="number" value={tier.service_fee} onChange={e => updatePricingTier(tier.id, 'service_fee', parseFloat(e.target.value) || 0)} placeholder="0" />
-                                        </div>
-                                    </div>
-
-                                    <div className="pt-2 border-t mt-4">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <Label className="text-xs">Other Fees</Label>
-                                            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => addOtherFee(tier.id)}>+ Add Fee</Button>
-                                        </div>
-                                        {tier.other_fees.map((fee, idx) => (
-                                            <div key={idx} className="flex gap-2 items-center mt-1">
-                                                <Input className="flex-1 h-8 text-sm" placeholder="Fee Name (e.g., Courier)" value={fee.name} onChange={e => updateOtherFee(tier.id, idx, 'name', e.target.value)} />
-                                                <Input className="w-[120px] h-8 text-sm" type="number" placeholder="Amount" value={fee.amount} onChange={e => updateOtherFee(tier.id, idx, 'amount', parseFloat(e.target.value) || 0)} />
-                                                <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => removeOtherFee(tier.id, idx)}>
-                                                    <HugeiconsIcon icon={Delete02Icon} className="size-3" />
-                                                </Button>
-                                            </div>
-                                        ))}
                                     </div>
                                 </div>
                             ))}

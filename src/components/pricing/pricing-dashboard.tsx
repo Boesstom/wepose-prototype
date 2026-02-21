@@ -179,6 +179,7 @@ export function PricingDashboard() {
     const [printConfig, setPrintConfig] = useState({
         showRetail: true,
         showAgentStandard: true,
+        showTiers: true,
         showPromo: false,
         agentId: "",
         agentName: ""
@@ -741,6 +742,7 @@ export function PricingDashboard() {
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="system">Master / System Override</SelectItem>
+                                        <SelectItem value="all_tiers">All Available Tiers</SelectItem>
                                         <SelectItem value="Global">Global Tier</SelectItem>
                                         <SelectItem value="Adult">Adult Tier</SelectItem>
                                         <SelectItem value="Child">Child Tier</SelectItem>
@@ -1175,6 +1177,14 @@ export function PricingDashboard() {
                                 />
                                 <Label htmlFor="showAgentStandard">Include Standard Agent Prices</Label>
                             </div>
+                            <div className="flex items-center space-x-2">
+                                <Checkbox
+                                    id="showTiers"
+                                    checked={printConfig.showTiers}
+                                    onCheckedChange={(c) => setPrintConfig(prev => ({ ...prev, showTiers: !!c }))}
+                                />
+                                <Label htmlFor="showTiers">Include Tier Prices (Adult, Child, etc.)</Label>
+                            </div>
                             {/* TODO: Add Promo Logic if needed, currently just a checkbox placeholder or we can implement basic promo column */}
                             <div className="flex items-center space-x-2">
                                 <Checkbox
@@ -1250,6 +1260,7 @@ export function PricingDashboard() {
                             <th>Type</th>
                             {printConfig.showRetail && <th>Retail (FIT)</th>}
                             {printConfig.showAgentStandard && <th>Agent Standard</th>}
+                            {printConfig.showTiers && <th>Tier Prices</th>}
                             {printConfig.agentId && <th>Special Price ({printConfig.agentName})</th>}
                             {printConfig.showPromo && <th>Active Promo</th>}
                         </tr>
@@ -1277,6 +1288,22 @@ export function PricingDashboard() {
                                         {printConfig.showAgentStandard && (
                                             <td>
                                                 {visa.priceAgent ? new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(visa.priceAgent) : "-"}
+                                            </td>
+                                        )}
+                                        {printConfig.showTiers && (
+                                            <td>
+                                                {visa.pricing_breakdown && Array.isArray(visa.pricing_breakdown) && visa.pricing_breakdown.length > 0 ? (
+                                                    <ul style={{ margin: 0, paddingLeft: "16px", fontSize: "11px", lineHeight: "1.4" }}>
+                                                        {visa.pricing_breakdown.filter((t: any) => t.category !== "Global").map((tier: any) => (
+                                                            <li key={tier.id}>
+                                                                <strong>{tier.category}:</strong>&nbsp;
+                                                                {printConfig.showRetail && `FIT ${new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(tier.fit_price || 0)}`}
+                                                                {printConfig.showRetail && printConfig.showAgentStandard && " | "}
+                                                                {printConfig.showAgentStandard && `Agt ${new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(tier.agent_price || 0)}`}
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                ) : "-"}
                                             </td>
                                         )}
                                         {printConfig.agentId && (

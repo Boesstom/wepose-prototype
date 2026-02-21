@@ -185,7 +185,7 @@ export async function bulkUpdatePrices(
   amount: number,
   type: 'increase' | 'decrease' | 'set',
   target: 'price' | 'price_agent' | 'embassy_price' | 'center_price' | 'service_fee' | 'fit_price' | 'agent_price',
-  category?: PricingCategory
+  category?: PricingCategory | 'all_tiers'
 ) {
   const supabase = createClient();
 
@@ -209,29 +209,56 @@ export async function bulkUpdatePrices(
       await supabase.from('visas').update({ [target]: newVal }).eq('id', v.id);
     } else if (category && target) {
       let tiers = Array.isArray(v.pricing_breakdown) ? [...v.pricing_breakdown] : [];
-      let tierIndex = tiers.findIndex((t: any) => t.category === category);
 
-      if (tierIndex === -1) {
-        tiers.push({
-          id: crypto.randomUUID(),
-          category: category,
-          embassy_price: 0,
-          center_price: 0,
-          service_fee: 0,
-          other_fees: [],
-          fit_price: 0,
-          agent_price: 0
-        });
-        tierIndex = tiers.length - 1;
+      if (category === 'all_tiers') {
+          if (tiers.length === 0) {
+              const defaultCategories = ['Global', 'Adult', 'Child', 'Infant'];
+              tiers = defaultCategories.map(cat => ({
+                  id: crypto.randomUUID(),
+                  category: cat,
+                  embassy_price: 0,
+                  center_price: 0,
+                  service_fee: 0,
+                  other_fees: [],
+                  fit_price: 0,
+                  agent_price: 0
+              }));
+          }
+
+          tiers.forEach(tier => {
+              let currentVal = tier[target] || 0;
+              let newVal = currentVal;
+              if (type === 'increase') newVal += amount;
+              else if (type === 'decrease') newVal = Math.max(0, newVal - amount);
+              else if (type === 'set') newVal = amount;
+              
+              tier[target] = newVal;
+          });
+      } else {
+        let tierIndex = tiers.findIndex((t: any) => t.category === category);
+
+        if (tierIndex === -1) {
+          tiers.push({
+            id: crypto.randomUUID(),
+            category: category,
+            embassy_price: 0,
+            center_price: 0,
+            service_fee: 0,
+            other_fees: [],
+            fit_price: 0,
+            agent_price: 0
+          });
+          tierIndex = tiers.length - 1;
+        }
+
+        let currentVal = tiers[tierIndex][target] || 0;
+        let newVal = currentVal;
+        if (type === 'increase') newVal += amount;
+        else if (type === 'decrease') newVal = Math.max(0, newVal - amount);
+        else if (type === 'set') newVal = amount;
+
+        tiers[tierIndex][target] = newVal;
       }
-
-      let currentVal = tiers[tierIndex][target] || 0;
-      let newVal = currentVal;
-      if (type === 'increase') newVal += amount;
-      else if (type === 'decrease') newVal = Math.max(0, newVal - amount);
-      else if (type === 'set') newVal = amount;
-
-      tiers[tierIndex][target] = newVal;
 
       await supabase.from('visas').update({ pricing_breakdown: tiers }).eq('id', v.id);
     }

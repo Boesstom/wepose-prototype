@@ -1,25 +1,18 @@
 import { createClient } from "@supabase/supabase-js"
-// export type JobStatus = Tables<'job_statuses'> // (mocked below)
+import type { Database } from "@/types/database"
+
+export type JobStatus = Database['public']['Tables']['job_statuses']['Row']
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey)
 
 export async function getJobStatuses() {
     const { data, error } = await supabase.from('job_statuses').select('*').order('name')
     if (error) {
-        console.error("Error fetching job statuses:", error)
-        // Fallback or handle missing table if not created yet (mock fallback for dev)
-        return [
-            { id: '1', name: "Employee" },
-            { id: '2', name: "Business Owner" },
-            { id: '3', name: "Freelance" },
-            { id: '4', name: "Student" },
-            { id: '5', name: "Housewife" },
-            { id: '6', name: "Retiree" },
-            { id: '7', name: "Unemployed" }
-        ]
+        console.error("Error fetching job statuses:", error.message || error)
+        return []
     }
     return data
 }
